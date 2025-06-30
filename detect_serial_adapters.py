@@ -66,9 +66,13 @@ def check_known_zigbee(vid, pid):
             return entry
     return None
 
-# ========== 设备探测逻辑 ==========
+# ========== 设备探測逻辑 ==========
 def list_serial_ports():
-    return [p.device for p in serial.tools.list_ports.comports() if not p.device.endswith("/dev/tty")]
+    patterns = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAS*", "/dev/ttyS*", "/dev/ttyAMA*"]
+    all_ports = []
+    for pattern in patterns:
+        all_ports.extend(glob.glob(pattern))
+    return sorted(set(all_ports))
 
 def detect_device(port):
     result = {
@@ -78,44 +82,14 @@ def detect_device(port):
     }
 
     publish_mqtt({"status": "detecting", "port": port, "timestamp": result["timestamp"]})
+    logging.info(f"🔎 正在探測 {port}")
 
     try:
         info = next((p for p in serial.tools.list_ports.comports() if p.device == port), None)
         vid = int(info.vid) if info and info.vid else None
         pid = int(info.pid) if info and info.pid else None
-        if vid and pid:
-            zigbee = check_known_zigbee(vid, pid)
-            if zigbee:
-                result.update({
-                    "type": "zigbee",
-                    "protocol": zigbee.get("type", "unknown"),
-                    "baudrate": zigbee.get("baudrate", 115200),
-                    "confidence": "high",
-                })
-                publish_mqtt({"status": "zigbee_detected", **result})
-                return result
 
-        for baudrate in common_baudrates:
-            try:
-                with serial.Serial(port=port, baudrate=baudrate, timeout=1) as ser:
-                    ser.reset_input_buffer()
-                    ser.write(b"\x1A\xC0\x38\xBC\x7E")  # EZSP reset
-                    time.sleep(0.5)
-                    raw = ser.read(64).hex()
-                    if raw.startswith("11"):
-                        result.update({
-                            "type": "zigbee",
-                            "protocol": "ezsp",
-                            "raw_response": raw,
-                            "baudrate": baudrate,
-                            "confidence": "medium"
-                        })
-                        publish_mqtt({"status": "zigbee_detected", **result})
-                        return result
-            except Exception:
-                continue
-
-        publish_mqtt({"status": "zwave_detecting", "port": port})
+        # Step 1: Z-Wave 探測
         for baudrate in common_baudrates:
             try:
                 with serial.Serial(port=port, baudrate=baudrate, timeout=1) as ser:
@@ -132,6 +106,40 @@ def detect_device(port):
                             "confidence": "medium"
                         })
                         publish_mqtt({"status": "zwave_detected", **result})
+                        return result
+            except Exception:
+                continue
+
+        # Step 2: 基于 VID/PID 识别 Zigbee
+        if vid and pid:
+            zigbee = check_known_zigbee(vid, pid)
+            if zigbee:
+                result.update({
+                    "type": "zigbee",
+                    "protocol": zigbee.get("type", "unknown"),
+                    "baudrate": zigbee.get("baudrate", 115200),
+                    "confidence": "high",
+                })
+                publish_mqtt({"status": "zigbee_known", **result})
+                return result
+
+        # Step 3: 探測 EZSP 协议
+        for baudrate in common_baudrates:
+            try:
+                with serial.Serial(port=port, baudrate=baudrate, timeout=1) as ser:
+                    ser.reset_input_buffer()
+                    ser.write(b"\x1A\xC0\x38\xBC\x7E")  # EZSP reset
+                    time.sleep(0.5)
+                    raw = ser.read(64).hex()
+                    if raw.startswith("11"):
+                        result.update({
+                            "type": "zigbee",
+                            "protocol": "ezsp",
+                            "raw_response": raw,
+                            "baudrate": baudrate,
+                            "confidence": "medium"
+                        })
+                        publish_mqtt({"status": "zigbee_ezsp", **result})
                         return result
             except Exception:
                 continue
