@@ -26,6 +26,26 @@
 
 ```bash
 # 下载并运行安装脚本
+curl -fsSL https://raw.githubusercontent.com/79B0Y/detect_serial_adapters/main/install.sh | sudo bash
+
+# 或者如果您已经下载了项目
+git clone https://github.com/79B0Y/detect_serial_adapters.git
+cd detect_serial_adapters
+sudo chmod +x install.sh
+sudo ./install.sh
+```
+
+### 方法二：手动安装
+
+如果您想了解安装过程或需要自定义安装，请按照下面的详细步骤进行。棒等
+- **通用**: 基于 FTDI, CP210x, CH340 芯片的 USB 转串口设备
+
+## 🚀 快速安装
+
+### 方法一：一键安装脚本（推荐）
+
+```bash
+# 下载并运行安装脚本
 curl -fsSL https://raw.githubusercontent.com/your-username/serial-adapter-detector/main/install.sh | sudo bash
 
 # 或者如果您已经下载了项目
@@ -145,13 +165,13 @@ apt-get install -y nodejs
 
 ```bash
 # 方法一：使用 git 克隆
-git clone https://github.com/your-username/serial-adapter-detector.git
-cd serial-adapter-detector
+git clone https://github.com/79B0Y/detect_serial_adapters.git
+cd detect_serial_adapters
 
 # 方法二：下载压缩包
-wget https://github.com/your-username/serial-adapter-detector/archive/main.zip
+wget https://github.com/79B0Y/detect_serial_adapters/archive/main.zip
 unzip main.zip
-cd serial-adapter-detector-main
+cd detect_serial_adapters-main
 ```
 
 ### 3.2 创建 Python 虚拟环境
@@ -465,8 +485,8 @@ netstat -an | grep 1883
 
 如果您遇到其他问题：
 
-1. 查看 [FAQ 文档](../docs/faq.md)
-2. 搜索 [GitHub Issues](https://github.com/your-username/serial-adapter-detector/issues)
+1. 查看 [FAQ 文档](https://github.com/79B0Y/detect_serial_adapters/wiki/FAQ)
+2. 搜索 [GitHub Issues](https://github.com/79B0Y/detect_serial_adapters/issues)
 3. 创建新的 Issue 并提供详细信息：
    - 操作系统版本
    - Python 和 Node.js 版本
