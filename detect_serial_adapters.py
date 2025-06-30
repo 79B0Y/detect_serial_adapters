@@ -5,6 +5,7 @@
 ✅ 每个串口中文日志输出
 ✅ MQTT 先上报 running 状态
 ✅ MQTT 上报中包含最终波特率
+✅ 保留最近 3 个结果文件
 """
 
 import os
@@ -43,7 +44,6 @@ logging.basicConfig(
 logger = logging.getLogger("serial_detect")
 
 CANDIDATE_BAUDRATES = [115200, 57600, 38400, 9600, 230400, 250000]
-
 
 def try_baudrate(port, baudrate):
     try:
@@ -123,6 +123,18 @@ def save_result(payload):
     with open(LATEST_JSON, "w") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
+    # 删除旧的结果文件，保留最近 3 个
+    files = sorted(
+        glob.glob(os.path.join(SCAN_DIR, "serial_ports_*.json")),
+        key=os.path.getmtime,
+        reverse=True
+    )
+    for f in files[3:]:
+        try:
+            os.remove(f)
+            logger.info(f"🧹 删除旧文件: {f}")
+        except Exception as e:
+            logger.warning(f"⚠️ 无法删除文件 {f}: {e}")
 
 def main():
     now = datetime.now(timezone.utc).isoformat()
