@@ -28,4 +28,180 @@
   
   <!-- 设备层 -->
   <g id="devices">
-    <rect x="50" y="100" width="280" height="200
+    <rect x="50" y="100" width="280" height="200" rx="10" fill="url(#deviceGradient)" stroke="#f59e0b" stroke-width="2"/>
+    <text x="190" y="130" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#92400e">
+      硬件设备层
+    </text>
+    
+    <!-- USB 设备 -->
+    <rect x="70" y="150" width="60" height="40" rx="5" fill="#fbbf24" stroke="#f59e0b"/>
+    <text x="100" y="165" text-anchor="middle" font-size="10" fill="#92400e">USB</text>
+    <text x="100" y="178" text-anchor="middle" font-size="10" fill="#92400e">Zigbee</text>
+    
+    <rect x="140" y="150" width="60" height="40" rx="5" fill="#fbbf24" stroke="#f59e0b"/>
+    <text x="170" y="165" text-anchor="middle" font-size="10" fill="#92400e">USB</text>
+    <text x="170" y="178" text-anchor="middle" font-size="10" fill="#92400e">Z-Wave</text>
+    
+    <rect x="210" y="150" width="60" height="40" rx="5" fill="#fbbf24" stroke="#f59e0b"/>
+    <text x="240" y="165" text-anchor="middle" font-size="10" fill="#92400e">Serial</text>
+    <text x="240" y="178" text-anchor="middle" font-size="10" fill="#92400e">Others</text>
+    
+    <!-- 串口映射 -->
+    <text x="70" y="210" font-size="12" fill="#92400e">/dev/ttyUSB0</text>
+    <text x="140" y="210" font-size="12" fill="#92400e">/dev/ttyUSB1</text>
+    <text x="210" y="210" font-size="12" fill="#92400e">/dev/ttyACM*</text>
+  </g>
+  
+  <!-- 检测系统 -->
+  <g id="detection-system">
+    <rect x="400" y="80" width="400" height="250" rx="10" fill="url(#systemGradient)" stroke="#8b5cf6" stroke-width="2"/>
+    <text x="600" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#581c87">
+      串口适配器检测系统
+    </text>
+    
+    <!-- Python 主脚本 -->
+    <rect x="420" y="130" width="160" height="60" rx="5" fill="#a855f7" stroke="#7c3aed"/>
+    <text x="500" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="white">detect_serial_adapters.py</text>
+    <text x="500" y="165" text-anchor="middle" font-size="10" fill="#e9d5ff">主检测脚本</text>
+    <text x="500" y="178" text-anchor="middle" font-size="10" fill="#e9d5ff">设备枚举 | 占用检测</text>
+    
+    <!-- NodeJS 子模块 -->
+    <rect x="620" y="130" width="160" height="60" rx="5" fill="#a855f7" stroke="#7c3aed"/>
+    <text x="700" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="white">detect_zigbee_with_z2m.js</text>
+    <text x="700" y="165" text-anchor="middle" font-size="10" fill="#e9d5ff">Zigbee 检测模块</text>
+    <text x="700" y="178" text-anchor="middle" font-size="10" fill="#e9d5ff">zigbee-herdsman</text>
+    
+    <!-- 配置文件 -->
+    <rect x="420" y="210" width="160" height="50" rx="5" fill="#c084fc" stroke="#a855f7"/>
+    <text x="500" y="230" text-anchor="middle" font-size="12" font-weight="bold" fill="#581c87">zigbee_known.yaml</text>
+    <text x="500" y="245" text-anchor="middle" font-size="10" fill="#581c87">已知设备库</text>
+    
+    <!-- 检测流程 -->
+    <rect x="620" y="210" width="160" height="50" rx="5" fill="#c084fc" stroke="#a855f7"/>
+    <text x="700" y="225" text-anchor="middle" font-size="11" font-weight="bold" fill="#581c87">检测流程</text>
+    <text x="700" y="238" text-anchor="middle" font-size="9" fill="#581c87">VID/PID → Herdsman → Z-Wave</text>
+    <text x="700" y="250" text-anchor="middle" font-size="9" fill="#581c87">版本命令检测</text>
+  </g>
+  
+  <!-- 数据流箭头 -->
+  <g id="arrows" stroke="#6b7280" stroke-width="2" fill="none" marker-end="url(#arrowhead)">
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+        <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+      </marker>
+    </defs>
+    
+    <!-- 设备到检测系统 -->
+    <path d="M 330 200 Q 365 200 400 165" stroke="#f59e0b" stroke-width="3"/>
+    <text x="365" y="190" text-anchor="middle" font-size="10" fill="#92400e">串口设备</text>
+    
+    <!-- Python 到 NodeJS -->
+    <path d="M 580 160 L 620 160" stroke="#8b5cf6" stroke-width="2"/>
+    <text x="600" y="150" text-anchor="middle" font-size="9" fill="#7c3aed">调用</text>
+  </g>
+  
+  <!-- 输出层 -->
+  <g id="outputs">
+    <rect x="870" y="80" width="280" height="250" rx="10" fill="url(#outputGradient)" stroke="#10b981" stroke-width="2"/>
+    <text x="1010" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#047857">
+      输出与集成
+    </text>
+    
+    <!-- MQTT 上报 -->
+    <rect x="890" y="130" width="110" height="50" rx="5" fill="#34d399" stroke="#10b981"/>
+    <text x="945" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="#047857">MQTT 上报</text>
+    <text x="945" y="165" text-anchor="middle" font-size="10" fill="#047857">isg/serial/scan</text>
+    
+    <!-- JSON 存储 -->
+    <rect x="1020" y="130" width="110" height="50" rx="5" fill="#34d399" stroke="#10b981"/>
+    <text x="1075" y="150" text-anchor="middle" font-size="12" font-weight="bold" fill="#047857">JSON 存储</text>
+    <text x="1075" y="165" text-anchor="middle" font-size="10" fill="#047857">设备记录</text>
+    
+    <!-- 日志输出 -->
+    <rect x="890" y="200" width="110" height="50" rx="5" fill="#6ee7b7" stroke="#34d399"/>
+    <text x="945" y="220" text-anchor="middle" font-size="12" font-weight="bold" fill="#047857">日志系统</text>
+    <text x="945" y="235" text-anchor="middle" font-size="10" fill="#047857">中文彩色输出</text>
+    
+    <!-- 配置生成 -->
+    <rect x="1020" y="200" width="110" height="50" rx="5" fill="#6ee7b7" stroke="#34d399"/>
+    <text x="1075" y="220" text-anchor="middle" font-size="12" font-weight="bold" fill="#047857">配置生成</text>
+    <text x="1075" y="235" text-anchor="middle" font-size="10" fill="#047857">Z2M | ZwaveJS</text>
+  </g>
+  
+  <!-- 检测系统到输出 -->
+  <path d="M 800 205 Q 835 205 870 165" stroke="#8b5cf6" stroke-width="3" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="835" y="195" text-anchor="middle" font-size="10" fill="#7c3aed">结果输出</text>
+  
+  <!-- 应用集成层 -->
+  <g id="applications">
+    <rect x="200" y="400" width="800" height="150" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="2"/>
+    <text x="600" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#374151">
+      应用集成层
+    </text>
+    
+    <!-- APK 触发 -->
+    <rect x="220" y="450" width="120" height="60" rx="5" fill="#fef3c7" stroke="#f59e0b"/>
+    <text x="280" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#92400e">Android APK</text>
+    <text x="280" y="485" text-anchor="middle" font-size="10" fill="#92400e">SSH 命令触发</text>
+    <text x="280" y="498" text-anchor="middle" font-size="10" fill="#92400e">远程调用</text>
+    
+    <!-- Zigbee2MQTT -->
+    <rect x="360" y="450" width="120" height="60" rx="5" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="420" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e40af">Zigbee2MQTT</text>
+    <text x="420" y="485" text-anchor="middle" font-size="10" fill="#1e40af">自动配置生成</text>
+    <text x="420" y="498" text-anchor="middle" font-size="10" fill="#1e40af">Docker 部署</text>
+    
+    <!-- Z-Wave JS UI -->
+    <rect x="500" y="450" width="120" height="60" rx="5" fill="#e0e7ff" stroke="#6366f1"/>
+    <text x="560" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#4338ca">Z-Wave JS UI</text>
+    <text x="560" y="485" text-anchor="middle" font-size="10" fill="#4338ca">自动配置生成</text>
+    <text x="560" y="498" text-anchor="middle" font-size="10" fill="#4338ca">Web 管理界面</text>
+    
+    <!-- Home Assistant -->
+    <rect x="640" y="450" width="120" height="60" rx="5" fill="#dcfce7" stroke="#22c55e"/>
+    <text x="700" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#15803d">Home Assistant</text>
+    <text x="700" y="485" text-anchor="middle" font-size="10" fill="#15803d">MQTT 集成</text>
+    <text x="700" y="498" text-anchor="middle" font-size="10" fill="#15803d">设备发现</text>
+    
+    <!-- 监控告警 -->
+    <rect x="780" y="450" width="120" height="60" rx="5" fill="#fef2f2" stroke="#ef4444"/>
+    <text x="840" y="470" text-anchor="middle" font-size="12" font-weight="bold" fill="#dc2626">监控告警</text>
+    <text x="840" y="485" text-anchor="middle" font-size="10" fill="#dc2626">设备状态监控</text>
+    <text x="840" y="498" text-anchor="middle" font-size="10" fill="#dc2626">异常告警</text>
+  </g>
+  
+  <!-- 数据流到应用层 -->
+  <path d="M 600 330 L 600 400" stroke="#10b981" stroke-width="3" fill="none" marker-end="url(#arrowhead)"/>
+  <text x="620" y="365" font-size="10" fill="#047857">数据流</text>
+  
+  <!-- 系统特性 -->
+  <g id="features">
+    <rect x="50" y="600" width="1100" height="140" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+    <text x="600" y="630" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#92400e">
+      系统特性
+    </text>
+    
+    <!-- 特性列表 -->
+    <g font-size="12" fill="#92400e">
+      <text x="80" y="660">🔍 自动扫描 /dev/tty* 设备</text>
+      <text x="300" y="660">🏠 Zigbee 协议自动识别</text>
+      <text x="520" y="660">🌊 Z-Wave 版本命令检测</text>
+      <text x="740" y="660">📊 实时占用状态监控</text>
+      
+      <text x="80" y="685">📡 MQTT 实时数据上报</text>
+      <text x="300" y="685">💾 JSON 历史记录存档</text>
+      <text x="520" y="685">🎨 中文彩色终端输出</text>
+      <text x="740" y="685">⚡ 支持批量并发检测</text>
+      
+      <text x="80" y="710">🔧 自动生成应用配置</text>
+      <text x="300" y="710">🐳 Docker Compose 部署</text>
+      <text x="520" y="710">📱 Android Termux 优化</text>
+      <text x="740" y="710">🔄 定时服务与监控</text>
+    </g>
+  </g>
+  
+  <!-- 版本信息 -->
+  <text x="1150" y="790" text-anchor="end" font-size="10" fill="#6b7280">
+    Serial Adapter Detection System v1.0
+  </text>
+</svg>
