@@ -843,10 +843,10 @@ npm test
 
 ### 获取帮助
 
-- 📚 查看完整文档: [GitHub Wiki](https://github.com/your-username/serial-adapter-detector/wiki)
-- 🐛 报告问题: [GitHub Issues](https://github.com/your-username/serial-adapter-detector/issues)
-- 💬 社区讨论: [GitHub Discussions](https://github.com/your-username/serial-adapter-detector/discussions)
-- 📧 邮件支持: support@yourproject.com
+- 📚 查看完整文档: [GitHub Wiki](https://github.com/79B0Y/detect_serial_adapters/wiki)
+- 🐛 报告问题: [GitHub Issues](https://github.com/79B0Y/detect_serial_adapters/issues)
+- 💬 社区讨论: [GitHub Discussions](https://github.com/79B0Y/detect_serial_adapters/discussions)
+- 📧 邮件支持: 通过 GitHub Issues 联系
 
 ## 🎯 最佳实践
 
