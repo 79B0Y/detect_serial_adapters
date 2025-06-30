@@ -1,0 +1,52 @@
+{
+  "name": "serial-adapter-detector",
+  "version": "1.0.0",
+  "description": "Serial adapter auto-detection system for Zigbee and Z-Wave devices",
+  "main": "detect_zigbee_with_z2m.js",
+  "scripts": {
+    "start": "node detect_zigbee_with_z2m.js",
+    "test": "node -e \"require('zigbee-herdsman'); console.log('Dependencies OK')\"",
+    "install-deps": "npm install",
+    "detect": "node detect_zigbee_with_z2m.js"
+  },
+  "keywords": [
+    "zigbee",
+    "zwave",
+    "serial",
+    "adapter",
+    "detection",
+    "mqtt",
+    "home-automation",
+    "termux",
+    "android"
+  ],
+  "author": "Serial Detector System",
+  "license": "MIT",
+  "dependencies": {
+    "zigbee-herdsman": "^0.21.0"
+  },
+  "optionalDependencies": {
+    "serialport": "^10.5.0"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/serial-adapter-detector.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/serial-adapter-detector/issues"
+  },
+  "homepage": "https://github.com/your-username/serial-adapter-detector#readme",
+  "os": [
+    "linux",
+    "android"
+  ],
+  "cpu": [
+    "arm",
+    "arm64",
+    "x64"
+  ]
+}
