@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-串口适配器自动识别系统 - 完整优化版
-支持 EZSP / ZNP / Z-Wave 检测 + MQTT 上报 + 历史比对 + 日志输出
+串口适配器自动识别系统 - 增强版
+✅ 自动识别 Zigbee 波特率
+✅ 每个串口中文日志输出
+✅ MQTT 先上报 running 状态
+✅ MQTT 上报中包含最终波特率
 """
 
 import os
 import json
 import time
-import yaml
 import glob
-import logging
 import serial
+import logging
 import subprocess
-from datetime import datetime
-from typing import List, Dict, Optional
+from datetime import datetime, timezone
+import paho.mqtt.publish as publish
 
-# ========== 配置项 ==========
 SCAN_DIR = "/sdcard/isgbackup/serialport"
 LATEST_JSON = os.path.join(SCAN_DIR, "latest.json")
 LOG_FILE = os.path.join(SCAN_DIR, "serial_detect.log")
-ZIGBEE_KNOWN = os.path.join(SCAN_DIR, "zigbee_known.yaml")
 
-# MQTT 配置（支持环境变量覆盖）
+# MQTT 设置（可用环境变量覆盖）
 MQTT_CONFIG = {
     "broker": os.getenv("MQTT_BROKER", "127.0.0.1"),
     "port": int(os.getenv("MQTT_PORT", 1883)),
@@ -31,149 +31,135 @@ MQTT_CONFIG = {
     "retain": os.getenv("MQTT_RETAIN", "true") == "true"
 }
 
-# ========== 日志配置 ==========
 os.makedirs(SCAN_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s: %(message)s',
+    format='%(asctime)s %(message)s',
     handlers=[
         logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger("serial_detector")
+logger = logging.getLogger("serial_detect")
 
-# ========== 工具函数 ==========
-def load_known_devices() -> List[Dict]:
-    if os.path.exists(ZIGBEE_KNOWN):
-        with open(ZIGBEE_KNOWN, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    return []
+CANDIDATE_BAUDRATES = [115200, 57600, 38400, 9600, 230400, 250000]
 
-def get_serial_ports() -> List[str]:
-    patterns = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAMA*", "/dev/ttyAS*", "/dev/ttyS*"]
+
+def try_baudrate(port, baudrate):
+    try:
+        ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.5)
+        ser.write(b"\x1A\xC0\x38\xBC\x7E")
+        time.sleep(0.2)
+        response = ser.read_all().hex().lower()
+        ser.close()
+        if response.startswith("11"):
+            return True, response
+    except Exception:
+        pass
+    return False, ""
+
+def detect_zigbee_device(port):
+    logger.info(f"🚀 开始探测串口: {port}")
+    for baud in CANDIDATE_BAUDRATES:
+        logger.info(f"🔍 尝试波特率 {baud}...")
+        success, response = try_baudrate(port, baud)
+        if success:
+            logger.info(f"✅ Zigbee 设备响应成功，波特率为 {baud}, 响应为 {response[:32]}...")
+            return {
+                "port": port,
+                "type": "zigbee",
+                "protocol": "ezsp",
+                "baudrate": baud,
+                "raw_response": response,
+                "confidence": "medium"
+            }
+    logger.info(f"❌ 未发现 Zigbee 响应: {port}")
+    return {
+        "port": port,
+        "type": "unknown",
+        "confidence": "low"
+    }
+
+def discover_ports():
+    patterns = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAS*", "/dev/ttyAMA*", "/dev/ttyS*"]
     ports = []
-    for pattern in patterns:
-        ports.extend(glob.glob(pattern))
+    for p in patterns:
+        ports.extend(glob.glob(p))
     return sorted(set(ports))
 
-def is_port_busy(port: str) -> bool:
+def is_port_busy(port):
     try:
-        res = subprocess.run(['lsof', port], capture_output=True, text=True)
-        return res.returncode == 0
+        result = subprocess.run(['lsof', port], capture_output=True)
+        return result.returncode == 0
     except:
         return False
 
-def read_last_result() -> List[str]:
-    if os.path.exists(LATEST_JSON):
-        with open(LATEST_JSON, 'r', encoding='utf-8') as f:
-            try:
-                data = json.load(f)
-                return [d['port'] for d in data.get('ports', [])]
-            except:
-                return []
-    return []
-
-def save_current_result(payload: Dict):
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    filename = os.path.join(SCAN_DIR, f"serial_ports_{timestamp}.json")
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    with open(LATEST_JSON, 'w', encoding='utf-8') as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-
-# ========== 主探测逻辑 ==========
-def detect_serial_devices():
-    known_devices = load_known_devices()
-    ports = get_serial_ports()
-    logger.info(f"🔍 共发现 {len(ports)} 个串口设备")
-
-    detected_ports = []
-    for port in ports:
-        info = {
-            "port": port,
-            "busy": is_port_busy(port),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-        try:
-            ser = serial.Serial(port=port, baudrate=115200, timeout=2, rtscts=False)
-            ser.reset_input_buffer()
-            ser.reset_output_buffer()
-
-            # 尝试发送 EZSP 重置指令
-            ser.write(b"\x1A\xC0\x38\xBC\x7E")
-            ser.flush()
-            time.sleep(0.3)
-            response = ser.read_all().hex().lower()
-            info["raw_response"] = response
-            ser.close()
-
-            for device in known_devices:
-                if any(pattern in response for pattern in device.get("response_patterns", [])):
-                    info.update({
-                        "type": "zigbee",
-                        "protocol": device.get("protocol"),
-                        "manufacturer": device.get("manufacturer"),
-                        "model": device.get("name"),
-                        "chipset": device.get("chipset"),
-                        "confidence": "high"
-                    })
-                    break
-            else:
-                if response:
-                    info.update({
-                        "type": "zigbee",
-                        "protocol": "ezsp",
-                        "confidence": "medium"
-                    })
-                else:
-                    info["type"] = "unknown"
-
-        except Exception as e:
-            info["error"] = str(e)
-            info["type"] = "error"
-
-        detected_ports.append(info)
-        time.sleep(0.1)
-
-    return detected_ports
-
-# ========== MQTT 上报 ==========
-def publish_mqtt(payload: Dict):
+def publish_mqtt(data):
     try:
-        import paho.mqtt.publish as publish
         publish.single(
             topic=MQTT_CONFIG['topic'],
-            payload=json.dumps(payload),
+            payload=json.dumps(data),
             hostname=MQTT_CONFIG['broker'],
             port=MQTT_CONFIG['port'],
-            auth={'username': MQTT_CONFIG['user'], 'password': MQTT_CONFIG['pass']},
+            auth={"username": MQTT_CONFIG['user'], "password": MQTT_CONFIG['pass']},
             retain=MQTT_CONFIG['retain']
         )
-        logger.info(f"📡 MQTT 上报成功 → {MQTT_CONFIG['topic']}")
+        logger.info("📡 MQTT 上报成功")
     except Exception as e:
-        logger.warning(f"❌ MQTT 上报失败: {e}")
+        logger.warning(f"⚠️ MQTT 上报失败: {e}")
 
-# ========== 主程序入口 ==========
+def read_previous_ports():
+    try:
+        with open(LATEST_JSON, "r") as f:
+            return [p['port'] for p in json.load(f).get("ports", [])]
+    except:
+        return []
+
+def save_result(payload):
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    path = os.path.join(SCAN_DIR, f"serial_ports_{timestamp}.json")
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    with open(LATEST_JSON, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def main():
-    now = datetime.utcnow().isoformat()
-    new_result = detect_serial_devices()
-    old_ports = set(read_last_result())
-    new_ports = set([x["port"] for x in new_result])
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 上报 running 状态
+    publish_mqtt({"status": "running", "timestamp": now})
+
+    ports = discover_ports()
+    logger.info(f"🔧 发现 {len(ports)} 个串口设备: {ports}")
+
+    old_ports = set(read_previous_ports())
+    detected = []
+
+    for port in ports:
+        if is_port_busy(port):
+            logger.info(f"⛔ 串口 {port} 被占用，跳过检测")
+            detected.append({"port": port, "type": "occupied", "confidence": "none"})
+        else:
+            result = detect_zigbee_device(port)
+            result["timestamp"] = datetime.now(timezone.utc).isoformat()
+            detected.append(result)
+
+    new_ports = set([d["port"] for d in detected])
 
     payload = {
         "timestamp": now,
-        "ports": new_result,
+        "ports": detected,
         "added": sorted(list(new_ports - old_ports)),
         "removed": sorted(list(old_ports - new_ports))
     }
 
-    save_current_result(payload)
+    save_result(payload)
     publish_mqtt(payload)
 
-    logger.info("✅ 串口识别流程完成")
-    logger.info(json.dumps(payload, indent=2, ensure_ascii=False))
+    logger.info("🟢 串口识别完成：")
+    for p in detected:
+        logger.info(json.dumps(p, ensure_ascii=False, indent=2))
 
 if __name__ == '__main__':
     main()
