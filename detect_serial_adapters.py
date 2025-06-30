@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
-串口适配器自动识别系统 - 增强版
-✅ 自动识别 Zigbee 波特率
-✅ 每个串口中文日志输出
-✅ MQTT 先上报 running 状态
-✅ MQTT 上报中包含最终波特率
-✅ 保留最近 3 个结果文件
+串口适配器自动识别系统 - 完整集成版本
+✅ 自动识别 Zigbee & Z-Wave 波特率
+✅ MQTT 流式状态上报（探测开始 / 协议识别 / 占用）
+✅ 本地记录最新扫描结果 + 保留最近 3 次
 """
 
 import os
@@ -22,7 +20,6 @@ SCAN_DIR = "/sdcard/isgbackup/serialport"
 LATEST_JSON = os.path.join(SCAN_DIR, "latest.json")
 LOG_FILE = os.path.join(SCAN_DIR, "serial_detect.log")
 
-# MQTT 设置（可用环境变量覆盖）
 MQTT_CONFIG = {
     "broker": os.getenv("MQTT_BROKER", "127.0.0.1"),
     "port": int(os.getenv("MQTT_PORT", 1883)),
@@ -44,6 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger("serial_detect")
 
 CANDIDATE_BAUDRATES = [115200, 57600, 38400, 9600, 230400, 250000]
+ZWAVE_BAUDRATES = [115200, 57600, 38400, 9600, 230400]
 
 def try_baudrate(port, baudrate):
     try:
@@ -54,18 +52,53 @@ def try_baudrate(port, baudrate):
         ser.close()
         if response.startswith("11"):
             return True, response
-    except Exception:
+    except:
         pass
     return False, ""
 
+def try_zwave_baudrate(port, baudrate):
+    try:
+        ser = serial.Serial(port, baudrate, timeout=1)
+        ser.write(b'\x01\x03\x00\x15\xE9')
+        time.sleep(0.3)
+        resp = ser.read_all()
+        ser.close()
+        if resp and resp[0] == 0x01 and resp[1] == 0x10:
+            return True, resp.hex()
+    except:
+        pass
+    return False, ""
+
+def publish_mqtt_status(port, phase, info=None):
+    data = {
+        "status": phase,
+        "port": port,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    if info:
+        data.update(info)
+    try:
+        publish.single(
+            topic=MQTT_CONFIG['topic'],
+            payload=json.dumps(data),
+            hostname=MQTT_CONFIG['broker'],
+            port=MQTT_CONFIG['port'],
+            auth={"username": MQTT_CONFIG['user'], "password": MQTT_CONFIG['pass']},
+            retain=False
+        )
+        logger.debug(f"📡 状态上报: {data}")
+    except Exception as e:
+        logger.warning(f"⚠️ MQTT 状态上报失败: {e}")
+
 def detect_zigbee_device(port):
-    logger.info(f"🚀 开始探测串口: {port}")
+    logger.info(f"🚀 开始 Zigbee 探测: {port}")
+    publish_mqtt_status(port, "zigbee_detecting")
     for baud in CANDIDATE_BAUDRATES:
-        logger.info(f"🔍 尝试波特率 {baud}...")
+        logger.info(f"🔍 尝试 Zigbee 波特率 {baud}...")
         success, response = try_baudrate(port, baud)
         if success:
-            logger.info(f"✅ Zigbee 设备响应成功，波特率为 {baud}, 响应为 {response[:32]}...")
-            return {
+            logger.info(f"✅ Zigbee 响应成功 @ {baud}, 响应: {response[:32]}...")
+            result = {
                 "port": port,
                 "type": "zigbee",
                 "protocol": "ezsp",
@@ -73,12 +106,31 @@ def detect_zigbee_device(port):
                 "raw_response": response,
                 "confidence": "medium"
             }
+            publish_mqtt_status(port, "zigbee_detected", result)
+            return result
     logger.info(f"❌ 未发现 Zigbee 响应: {port}")
-    return {
-        "port": port,
-        "type": "unknown",
-        "confidence": "low"
-    }
+    return {"port": port, "type": "unknown", "confidence": "low"}
+
+def detect_zwave_device(port):
+    logger.info(f"🔄 开始 Z-Wave 探测: {port}")
+    publish_mqtt_status(port, "zwave_detecting")
+    for baud in ZWAVE_BAUDRATES:
+        logger.info(f"🔍 尝试 Z-Wave 波特率 {baud}...")
+        ok, response = try_zwave_baudrate(port, baud)
+        if ok:
+            logger.info(f"✅ Z-Wave 响应成功 @ {baud}, 响应: {response[:32]}...")
+            result = {
+                "port": port,
+                "type": "zwave",
+                "protocol": "zwave",
+                "baudrate": baud,
+                "confidence": "high",
+                "raw_response": response
+            }
+            publish_mqtt_status(port, "zwave_detected", result)
+            return result
+    logger.info(f"❌ 未检测到 Z-Wave 响应: {port}")
+    return None
 
 def discover_ports():
     patterns = ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyAS*", "/dev/ttyAMA*", "/dev/ttyS*"]
@@ -104,7 +156,7 @@ def publish_mqtt(data):
             auth={"username": MQTT_CONFIG['user'], "password": MQTT_CONFIG['pass']},
             retain=MQTT_CONFIG['retain']
         )
-        logger.info("📡 MQTT 上报成功")
+        logger.info("📡 MQTT 最终结果上报成功")
     except Exception as e:
         logger.warning(f"⚠️ MQTT 上报失败: {e}")
 
@@ -122,26 +174,17 @@ def save_result(payload):
         json.dump(payload, f, indent=2, ensure_ascii=False)
     with open(LATEST_JSON, "w") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
-
-    # 删除旧的结果文件，保留最近 3 个
-    files = sorted(
-        glob.glob(os.path.join(SCAN_DIR, "serial_ports_*.json")),
-        key=os.path.getmtime,
-        reverse=True
-    )
+    files = sorted(glob.glob(os.path.join(SCAN_DIR, "serial_ports_*.json")), key=os.path.getmtime, reverse=True)
     for f in files[3:]:
         try:
             os.remove(f)
             logger.info(f"🧹 删除旧文件: {f}")
         except Exception as e:
-            logger.warning(f"⚠️ 无法删除文件 {f}: {e}")
+            logger.warning(f"⚠️ 删除失败: {e}")
 
 def main():
     now = datetime.now(timezone.utc).isoformat()
-
-    # 上报 running 状态
     publish_mqtt({"status": "running", "timestamp": now})
-
     ports = discover_ports()
     logger.info(f"🔧 发现 {len(ports)} 个串口设备: {ports}")
 
@@ -149,27 +192,30 @@ def main():
     detected = []
 
     for port in ports:
+        publish_mqtt_status(port, "detecting")
         if is_port_busy(port):
             logger.info(f"⛔ 串口 {port} 被占用，跳过检测")
-            detected.append({"port": port, "type": "occupied", "confidence": "none"})
+            result = {"port": port, "type": "occupied", "confidence": "none"}
+            publish_mqtt_status(port, "occupied")
         else:
             result = detect_zigbee_device(port)
-            result["timestamp"] = datetime.now(timezone.utc).isoformat()
-            detected.append(result)
+            if result["type"] == "unknown":
+                zwave = detect_zwave_device(port)
+                if zwave:
+                    result = zwave
+        result["timestamp"] = datetime.now(timezone.utc).isoformat()
+        detected.append(result)
 
     new_ports = set([d["port"] for d in detected])
-
     payload = {
         "timestamp": now,
         "ports": detected,
         "added": sorted(list(new_ports - old_ports)),
         "removed": sorted(list(old_ports - new_ports))
     }
-
     save_result(payload)
     publish_mqtt(payload)
-
-    logger.info("🟢 串口识别完成：")
+    logger.info("🟢 串口识别完成")
     for p in detected:
         logger.info(json.dumps(p, ensure_ascii=False, indent=2))
 
