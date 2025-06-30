@@ -1,238 +1,438 @@
 #!/usr/bin/env python3
-"""detect_serial_adapters.py — 全面串口探测、MQTT 上报与配置联动
-
-功能一览
---------
-* 扫描所有可用串口并收集硬件信息（VID, PID, Serial, Product, Manufacturer）。
-* 判断适配器类型：
-  - **Z‑Wave**：通过发送 GetVersion 帧 (0x01 0x03 0x00 0x07 0xFB)。
-  - **Zigbee**：根据 VID/PID & 描述串匹配已知列表（ZHA & Zigbee2MQTT 支持芯片）。
-* 将结果保存为 JSON：`/sdcard/isgbackup/serialport/serial_ports_<timestamp>.json`，并更新 `latest.json` 软链。
-* 比较与上次扫描差异 → 新增 / 移除设备列表。
-* 通过 MQTT 发布扫描结果（主题可配置，缺省 `isg/serial/scan`）。
-* 自动调用（或提示）现有脚本，更新：
-    * Z‑Wave: `generate_settings_json.py` (传入 `Z_SERIAL`)
-    * Zigbee2MQTT: `generate_config_yaml.py` (传入 `Z2M_SERIAL` & `Z2M_BAUDRATE`)
-
-依赖安装
---------
-```bash
-pip install pyserial paho-mqtt
-```
-
-CLI 用法示例
-------------
-```bash
-python /sdcard/isgbackup/zwave/detect_serial_adapters.py \
-    --mqtt-broker 127.0.0.1 --retain --run-generators
-```
+# -*- coding: utf-8 -*-
 """
-from __future__ import annotations
+串口适配器自动识别系统
+适用于 Android Termux + Proot Ubuntu 环境
+自动识别 Zigbee / Z-Wave 串口适配器并通过 MQTT 上报
+"""
 
-import argparse
-import json
 import os
+import sys
+import json
+import yaml
 import time
-from datetime import datetime, timezone
+import glob
+import argparse
+import subprocess
+import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 
-import paho.mqtt.client as mqtt
 import serial
-import serial.tools.list_ports as list_ports
+import serial.tools.list_ports
+import paho.mqtt.client as mqtt
+from colorama import init, Fore, Back, Style
 
-# -----------------------------------------------------------
-# 常量 & 已知适配器表
-# -----------------------------------------------------------
+# 初始化颜色输出
+init(autoreset=True)
 
-# Zigbee 适配器 (VID, PID) 列表（可自行补充）
-ZIGBEE_KNOWN: List[Tuple[int, int, str]] = [
-    (0x10C4, 0xEA60, "SiliconLabs CP210x"),  # 多数 EZSP / Sonoff ZBDongle‐E
-    (0x10C4, 0x8A2A, "Sonoff ZBDongle‐E"),
-    (0x0403, 0x6015, "FTDI CC2531/CC2652"),
-    (0x1A86, 0x55D4, "CH34x Zigbee"),
-]
-
-SERIAL_DIR = Path("/sdcard/isgbackup/serialport")
-SERIAL_DIR.mkdir(parents=True, exist_ok=True)
-LAST_JSON = SERIAL_DIR / "latest.json"
-
-# -----------------------------------------------------------
-# Helper: Probe Z‑Wave dongle (blocking ≤1s)
-# -----------------------------------------------------------
-
-_ZW_GET_VERSION = bytes([0x01, 0x03, 0x00, 0x07, 0xFB])
-
-def is_zwave(port: str, baud: int = 115200) -> bool:
-    """Return True if *port* responds to Z‑Wave GetVersion."""
-    try:
-        with serial.Serial(port, baudrate=baud, timeout=0.7) as s:
-            s.reset_input_buffer()
-            s.write(_ZW_GET_VERSION)
-            s.flush()
-            time.sleep(0.1)
-            resp = s.read(128)
-            return bool(resp and resp.startswith(b"\x01") and b"Z-Wave" in resp)
-    except Exception:
-        return False
-
-# -----------------------------------------------------------
-# Helper: Zigbee identification
-# -----------------------------------------------------------
-
-def is_zigbee(vid: Optional[int], pid: Optional[int], desc: str) -> bool:
-    if vid is None or pid is None:
-        return False
-    for v, p, _name in ZIGBEE_KNOWN:
-        if vid == v and pid == p:
-            return True
-    # Fallback heuristic
-    desc_l = desc.lower()
-    if any(k in desc_l for k in ("zigbee", "cc253", "cc265", "ezsp")):
-        return True
-    return False
-
-# -----------------------------------------------------------
-# Main scan routine
-# -----------------------------------------------------------
-
-def scan_serial_ports() -> List[Dict]:
-    result: List[Dict] = []
-    for port in list_ports.comports():
-        info = {
-            "device": port.device,
-            "hwid": port.hwid,
-            "vid": port.vid,
-            "pid": port.pid,
-            "serial_number": port.serial_number,
-            "manufacturer": port.manufacturer,
-            "product": port.product,
-            "description": port.description,
-            "is_zigbee": False,
-            "is_zwave": False,
+class SerialDetector:
+    def __init__(self, config_path: str = "zigbee_known.yaml", 
+                 storage_path: str = "/sdcard/isgbackup/serialport/",
+                 mqtt_config: Optional[Dict] = None,
+                 verbose: bool = False):
+        self.config_path = config_path
+        self.storage_path = Path(storage_path)
+        self.verbose = verbose
+        
+        # MQTT 默认配置
+        self.mqtt_config = mqtt_config or {
+            'broker': '127.0.0.1',
+            'port': 1883,
+            'user': 'admin',
+            'pass': 'admin',
+            'topic': 'isg/serial/scan',
+            'retain': True
         }
-        info["is_zigbee"] = is_zigbee(port.vid, port.pid, port.description or "")
-        if not info["is_zigbee"]:
-            # 避免对 Zigbee 端口发 Z‑Wave 帧
-            info["is_zwave"] = is_zwave(port.device)
-        else:
-            info["is_zwave"] = False
-        result.append(info)
-    return result
+        
+        # 创建存储目录
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        
+        # 设置日志
+        self.setup_logging()
+        
+        # 加载已知 Zigbee 设备库
+        self.zigbee_known = self.load_zigbee_known()
+        
+        self.logger.info("🚀 串口适配器检测系统初始化完成")
 
-# -----------------------------------------------------------
-# JSON 读写 & Diff
-# -----------------------------------------------------------
+    def setup_logging(self):
+        """设置日志系统"""
+        log_file = self.storage_path / "serial_detect.log"
+        
+        # 创建logger
+        self.logger = logging.getLogger('SerialDetector')
+        self.logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
+        
+        # 文件处理器
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(file_formatter)
+        
+        # 控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG if self.verbose else logging.INFO)
+        console_formatter = logging.Formatter('%(message)s')
+        console_handler.setFormatter(console_formatter)
+        
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
 
-def load_last() -> List[Dict]:
-    if LAST_JSON.exists():
+    def load_zigbee_known(self) -> List[Dict]:
+        """加载已知 Zigbee 设备库"""
         try:
-            return json.loads(LAST_JSON.read_text())
-        except Exception:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+                    self.logger.info(f"✅ 加载了 {len(data)} 个已知 Zigbee 设备")
+                    return data
+            else:
+                self.logger.warning(f"⚠️ 配置文件不存在: {self.config_path}")
+                return []
+        except Exception as e:
+            self.logger.error(f"❌ 加载 Zigbee 配置失败: {e}")
             return []
-    return []
 
-def save_current(data: List[Dict]) -> Path:
-    ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    outfile = SERIAL_DIR / f"serial_ports_{ts}.json"
-    outfile.write_text(json.dumps(data, indent=2))
-    # Update latest symlink / copy
-    try:
-        if LAST_JSON.exists() or LAST_JSON.is_symlink():
-            LAST_JSON.unlink()
-        LAST_JSON.symlink_to(outfile.name)
-    except Exception:
-        # On Android FAT sdcard (no symlink support) → write copy
-        LAST_JSON.write_text(json.dumps(data, indent=2))
-    return outfile
+    def get_serial_ports(self) -> List[Dict]:
+        """获取所有串口设备信息"""
+        ports = []
+        
+        try:
+            # 方法1: 使用 pyserial 枚举
+            for port in serial.tools.list_ports.comports():
+                port_info = {
+                    'device': port.device,
+                    'name': port.name or '',
+                    'description': port.description or '',
+                    'hwid': port.hwid or '',
+                    'vid': getattr(port, 'vid', None),
+                    'pid': getattr(port, 'pid', None),
+                    'serial_number': getattr(port, 'serial_number', None),
+                    'manufacturer': getattr(port, 'manufacturer', None),
+                    'product': getattr(port, 'product', None),
+                }
+                ports.append(port_info)
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ pyserial 枚举失败: {e}")
+        
+        # 方法2: Fallback - 直接扫描 /dev/tty*
+        if not ports:
+            try:
+                tty_devices = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyS*')
+                for device in tty_devices:
+                    if device != '/dev/tty':  # 排除 /dev/tty
+                        ports.append({
+                            'device': device,
+                            'name': os.path.basename(device),
+                            'description': 'Unknown serial device',
+                            'hwid': '',
+                            'vid': None,
+                            'pid': None,
+                            'serial_number': None,
+                            'manufacturer': None,
+                            'product': None
+                        })
+            except Exception as e:
+                self.logger.error(f"❌ 扫描 /dev/tty* 失败: {e}")
+        
+        self.logger.info(f"🔍 发现 {len(ports)} 个串口设备")
+        return ports
 
+    def check_port_busy(self, device: str) -> bool:
+        """检查串口是否被占用"""
+        try:
+            with serial.Serial(device, timeout=1) as ser:
+                return False  # 能打开说明未被占用
+        except serial.SerialException:
+            return True  # 被占用或其他错误
+        except Exception:
+            return True
 
-def diff_ports(old: List[Dict], new: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    old_set = {d["device"] for d in old}
-    new_set = {d["device"] for d in new}
-    added = [d for d in new if d["device"] not in old_set]
-    removed = [d for d in old if d["device"] not in new_set]
-    return added, removed
+    def check_zigbee_by_vid_pid(self, vid: Optional[int], pid: Optional[int]) -> Optional[str]:
+        """通过 VID/PID 匹配已知 Zigbee 设备"""
+        if vid is None or pid is None:
+            return None
+            
+        for device in self.zigbee_known:
+            if device.get('vid') == vid and device.get('pid') == pid:
+                return device.get('name', 'Unknown Zigbee')
+        return None
 
-# -----------------------------------------------------------
-# MQTT publish helper
-# -----------------------------------------------------------
+    def check_zigbee_with_herdsman(self, device: str) -> Optional[Dict]:
+        """使用 zigbee-herdsman 检测 Zigbee 适配器"""
+        try:
+            # 调用 NodeJS 子模块
+            result = subprocess.run([
+                'node', 'detect_zigbee_with_z2m.js', device
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                data = json.loads(result.stdout.strip())
+                if data.get('isZigbee'):
+                    return {
+                        'type': data.get('adapterType', 'Unknown'),
+                        'method': 'herdsman'
+                    }
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"⚠️ Zigbee 检测超时: {device}")
+        except json.JSONDecodeError:
+            self.logger.warning(f"⚠️ Zigbee 检测返回格式错误: {device}")
+        except FileNotFoundError:
+            self.logger.warning("⚠️ NodeJS 子模块不存在: detect_zigbee_with_z2m.js")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Zigbee 检测失败 {device}: {e}")
+        
+        return None
 
-def publish_mqtt(cfg: argparse.Namespace, payload: dict):
-    cli = mqtt.Client()
-    if cfg.mqtt_user:
-        cli.username_pw_set(cfg.mqtt_user, cfg.mqtt_pass or "")
-    try:
-        cli.connect(cfg.mqtt_broker, cfg.mqtt_port, 60)
-        cli.publish(cfg.topic, json.dumps(payload), qos=1, retain=cfg.retain)
-        cli.disconnect()
-    except Exception as exc:
-        print("[MQTT] publish failed:", exc)
+    def check_zwave(self, device: str) -> bool:
+        """检测 Z-Wave 适配器"""
+        try:
+            with serial.Serial(device, baudrate=115200, timeout=2) as ser:
+                # 发送版本查询指令
+                version_cmd = bytes([0x01, 0x03, 0x00, 0x07, 0xFB])
+                ser.write(version_cmd)
+                time.sleep(0.5)
+                
+                # 读取回应
+                if ser.in_waiting > 0:
+                    response = ser.read(ser.in_waiting)
+                    # Z-Wave 回应通常以 0x01 开头
+                    if len(response) > 0 and response[0] == 0x01:
+                        return True
+        except Exception as e:
+            self.logger.debug(f"Z-Wave 检测失败 {device}: {e}")
+        
+        return False
 
-# -----------------------------------------------------------
-# Generator call wrappers
-# -----------------------------------------------------------
+    def detect_adapters(self) -> List[Dict]:
+        """检测所有适配器"""
+        ports = self.get_serial_ports()
+        results = []
+        
+        for port in ports:
+            device = port['device']
+            self.logger.info(f"🔍 检测设备: {Fore.CYAN}{device}{Style.RESET_ALL}")
+            
+            result = port.copy()
+            result.update({
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'busy': self.check_port_busy(device),
+                'zigbee': None,
+                'zwave': False
+            })
+            
+            # 如果设备被占用，跳过协议检测
+            if result['busy']:
+                self.logger.warning(f"⚠️ 设备被占用: {device}")
+                results.append(result)
+                continue
+            
+            # Zigbee 检测
+            # 1. 首先尝试 VID/PID 匹配
+            zigbee_name = self.check_zigbee_by_vid_pid(port['vid'], port['pid'])
+            if zigbee_name:
+                result['zigbee'] = {
+                    'name': zigbee_name,
+                    'method': 'vid_pid'
+                }
+                self.logger.info(f"✅ Zigbee (VID/PID): {Fore.GREEN}{zigbee_name}{Style.RESET_ALL}")
+            else:
+                # 2. 使用 herdsman 自动检测
+                zigbee_info = self.check_zigbee_with_herdsman(device)
+                if zigbee_info:
+                    result['zigbee'] = zigbee_info
+                    self.logger.info(f"✅ Zigbee (Herdsman): {Fore.GREEN}{zigbee_info['type']}{Style.RESET_ALL}")
+            
+            # Z-Wave 检测
+            if self.check_zwave(device):
+                result['zwave'] = True
+                self.logger.info(f"✅ Z-Wave: {Fore.BLUE}{device}{Style.RESET_ALL}")
+            
+            results.append(result)
+        
+        return results
 
-def call_generators(cfg: argparse.Namespace, ports: List[Dict]):
-    """Invoke existing generator scripts with env vars."""
-    zw_port = next((d for d in ports if d["is_zwave"]), None)
-    zb_port = next((d for d in ports if d["is_zigbee"]), None)
-    env = os.environ.copy()
-    if zw_port:
-        env["Z_SERIAL"] = zw_port["device"]
-        print("[GEN] Z‑Wave serial =", zw_port["device"])
-    if zb_port:
-        env["Z2M_SERIAL"] = zb_port["device"]
-        env.setdefault("Z2M_BAUDRATE", "115200")
-        print("[GEN] Zigbee serial =", zb_port["device"])
+    def load_previous_results(self) -> List[Dict]:
+        """加载上次扫描结果"""
+        latest_file = self.storage_path / "latest.json"
+        try:
+            if latest_file.exists():
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    return json.load(f).get('ports', [])
+        except Exception as e:
+            self.logger.warning(f"⚠️ 加载上次结果失败: {e}")
+        return []
 
-    if cfg.run_generators and zw_port:
-        os.system("proot-distro login ubuntu -- python3 /sdcard/isgbackup/zwave/generate_settings_json.py")
-    if cfg.run_generators and zb_port:
-        os.system("proot-distro login ubuntu -- python3 /sdcard/isgbackup/z2m/generate_config_yaml.py")
+    def compare_results(self, current: List[Dict], previous: List[Dict]) -> Dict:
+        """比较当前和上次结果，找出新增/移除的设备"""
+        current_devices = {port['device'] for port in current}
+        previous_devices = {port['device'] for port in previous}
+        
+        added_devices = current_devices - previous_devices
+        removed_devices = previous_devices - current_devices
+        
+        added = [port for port in current if port['device'] in added_devices]
+        removed = [port for port in previous if port['device'] in removed_devices]
+        
+        return {'added': added, 'removed': removed}
 
-# -----------------------------------------------------------
-# CLI Entry
-# -----------------------------------------------------------
+    def save_results(self, results: List[Dict], changes: Dict) -> str:
+        """保存扫描结果"""
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"serial_ports_{timestamp}.json"
+        filepath = self.storage_path / filename
+        
+        data = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'ports': results,
+            'added': changes['added'],
+            'removed': changes['removed']
+        }
+        
+        # 保存时间戳文件
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        # 更新 latest.json
+        latest_file = self.storage_path / "latest.json"
+        with open(latest_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        self.logger.info(f"💾 结果已保存: {filename}")
+        return str(filepath)
+
+    def publish_mqtt(self, data: Dict) -> bool:
+        """发布 MQTT 消息"""
+        try:
+            client = mqtt.Client()
+            
+            # 设置认证
+            if self.mqtt_config.get('user') and self.mqtt_config.get('pass'):
+                client.username_pw_set(self.mqtt_config['user'], self.mqtt_config['pass'])
+            
+            # 连接并发布
+            client.connect(self.mqtt_config['broker'], self.mqtt_config['port'], 60)
+            
+            message = json.dumps(data, ensure_ascii=False)
+            result = client.publish(
+                self.mqtt_config['topic'], 
+                message, 
+                retain=self.mqtt_config.get('retain', True)
+            )
+            
+            client.disconnect()
+            
+            if result.rc == 0:
+                self.logger.info(f"📡 MQTT 发布成功: {self.mqtt_config['topic']}")
+                return True
+            else:
+                self.logger.error(f"❌ MQTT 发布失败: {result.rc}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ MQTT 连接失败: {e}")
+            return False
+
+    def run(self):
+        """运行主检测流程"""
+        self.logger.info(f"{Back.BLUE}{Fore.WHITE} 开始串口适配器扫描 {Style.RESET_ALL}")
+        
+        # 加载上次结果
+        previous_results = self.load_previous_results()
+        
+        # 检测当前适配器
+        current_results = self.detect_adapters()
+        
+        # 比较变化
+        changes = self.compare_results(current_results, previous_results)
+        
+        # 报告变化
+        if changes['added']:
+            self.logger.info(f"🆕 新增设备: {Fore.GREEN}{len(changes['added'])}{Style.RESET_ALL} 个")
+            for device in changes['added']:
+                self.logger.info(f"  + {device['device']}")
+        
+        if changes['removed']:
+            self.logger.info(f"🗑️ 移除设备: {Fore.RED}{len(changes['removed'])}{Style.RESET_ALL} 个")
+            for device in changes['removed']:
+                self.logger.info(f"  - {device['device']}")
+        
+        # 保存结果
+        self.save_results(current_results, changes)
+        
+        # MQTT 上报
+        mqtt_data = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'ports': current_results,
+            'added': changes['added'],
+            'removed': changes['removed']
+        }
+        
+        if self.publish_mqtt(mqtt_data):
+            self.logger.info("✅ 扫描完成并已上报")
+        else:
+            self.logger.warning("⚠️ 扫描完成但 MQTT 上报失败")
+        
+        # 统计输出
+        zigbee_count = sum(1 for p in current_results if p.get('zigbee'))
+        zwave_count = sum(1 for p in current_results if p.get('zwave'))
+        busy_count = sum(1 for p in current_results if p.get('busy'))
+        
+        self.logger.info(f"""
+{Back.GREEN}{Fore.BLACK} 扫描统计 {Style.RESET_ALL}
+📊 总设备数: {len(current_results)}
+🏠 Zigbee: {zigbee_count}
+🌊 Z-Wave: {zwave_count}
+🔒 被占用: {busy_count}
+        """.strip())
+
 
 def main():
-    p = argparse.ArgumentParser("Detect serial adapters (Zigbee / Z‑Wave) and publish via MQTT")
-    p.add_argument("--mqtt-broker", required=True)
-    p.add_argument("--mqtt-port", type=int, default=1883)
-    p.add_argument("--mqtt-user")
-    p.add_argument("--mqtt-pass")
-    p.add_argument("--topic", default="isg/serial/scan")
-    p.add_argument("--retain", action="store_true")
-    p.add_argument("--interval", type=int, help="repeat every N seconds")
-    p.add_argument("--run-generators", action="store_true", help="after detection call zwave & z2m generators")
-    args = p.parse_args()
+    parser = argparse.ArgumentParser(description='串口适配器自动识别系统')
+    parser.add_argument('--config', default='zigbee_known.yaml', help='Zigbee 已知设备配置文件')
+    parser.add_argument('--storage', default='/sdcard/isgbackup/serialport/', help='存储目录')
+    parser.add_argument('--mqtt-broker', default='127.0.0.1', help='MQTT Broker 地址')
+    parser.add_argument('--mqtt-port', type=int, default=1883, help='MQTT 端口')
+    parser.add_argument('--mqtt-user', default='admin', help='MQTT 用户名')
+    parser.add_argument('--mqtt-pass', default='admin', help='MQTT 密码')
+    parser.add_argument('--mqtt-topic', default='isg/serial/scan', help='MQTT 主题')
+    parser.add_argument('--verbose', '-v', action='store_true', help='详细输出')
+    
+    args = parser.parse_args()
+    
+    # 构建 MQTT 配置
+    mqtt_config = {
+        'broker': args.mqtt_broker,
+        'port': args.mqtt_port,
+        'user': args.mqtt_user,
+        'pass': args.mqtt_pass,
+        'topic': args.mqtt_topic,
+        'retain': True
+    }
+    
+    # 创建检测器并运行
+    detector = SerialDetector(
+        config_path=args.config,
+        storage_path=args.storage,
+        mqtt_config=mqtt_config,
+        verbose=args.verbose
+    )
+    
+    try:
+        detector.run()
+    except KeyboardInterrupt:
+        print("\n⚠️ 用户中断")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 运行错误: {e}")
+        sys.exit(1)
 
-    last_data = load_last()
 
-    def once():
-        nonlocal last_data
-        cur_data = scan_serial_ports()
-        added, removed = diff_ports(last_data, cur_data)
-        save_current(cur_data)
-
-        payload = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "ports": cur_data,
-            "added": added,
-            "removed": removed,
-        }
-        publish_mqtt(args, payload)
-        call_generators(args, cur_data)
-        last_data = cur_data
-
-    once()
-    if args.interval:
-        try:
-            while True:
-                time.sleep(args.interval)
-                once()
-        except KeyboardInterrupt:
-            print("Interrupted.")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
