@@ -15,7 +15,7 @@ import glob
 import argparse
 import subprocess
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -124,7 +124,23 @@ class SerialDetector:
         # 方法2: Fallback - 直接扫描 /dev/tty*
         if not ports:
             try:
-                tty_devices = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyS*')
+                # 扩展扫描范围，包含更多串口类型
+                tty_patterns = [
+                    '/dev/ttyUSB*',   # USB 转串口
+                    '/dev/ttyACM*',   # USB CDC ACM 设备
+                    '/dev/ttyS*',     # 标准串口
+                    '/dev/ttyAS*',    # ARM 串口（如您的 ttyAS3）
+                    '/dev/ttyAMA*',   # ARM AMBA 串口
+                    '/dev/ttyO*',     # OMAP 串口
+                    '/dev/ttymxc*',   # i.MX 串口
+                    '/dev/ttyAP*',    # ARM Primecell 串口
+                    '/dev/ttySAC*',   # Samsung 串口
+                ]
+                
+                tty_devices = []
+                for pattern in tty_patterns:
+                    tty_devices.extend(glob.glob(pattern))
+                
                 for device in tty_devices:
                     if device != '/dev/tty':  # 排除 /dev/tty
                         ports.append({
@@ -140,6 +156,25 @@ class SerialDetector:
                         })
             except Exception as e:
                 self.logger.error(f"❌ 扫描 /dev/tty* 失败: {e}")
+        
+        # 方法3: 强制添加已知设备（如果未被检测到）
+        known_devices = ['/dev/ttyAS3']  # 添加您的已知设备
+        current_devices = {port['device'] for port in ports}
+        
+        for device in known_devices:
+            if os.path.exists(device) and device not in current_devices:
+                self.logger.info(f"🔍 手动添加已知设备: {device}")
+                ports.append({
+                    'device': device,
+                    'name': os.path.basename(device),
+                    'description': f'Known serial device ({device})',
+                    'hwid': 'manually_added',
+                    'vid': None,
+                    'pid': None,
+                    'serial_number': None,
+                    'manufacturer': 'Unknown',
+                    'product': 'Board integrated serial port'
+                })
         
         self.logger.info(f"🔍 发现 {len(ports)} 个串口设备")
         return ports
@@ -221,7 +256,7 @@ class SerialDetector:
             
             result = port.copy()
             result.update({
-                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'timestamp': datetime.now(timezone.utc).isoformat(),
                 'busy': self.check_port_busy(device),
                 'zigbee': None,
                 'zwave': False
@@ -264,7 +299,16 @@ class SerialDetector:
         try:
             if latest_file.exists():
                 with open(latest_file, 'r', encoding='utf-8') as f:
-                    return json.load(f).get('ports', [])
+                    data = json.load(f)
+                    # 确保返回正确的数据结构
+                    if isinstance(data, dict) and 'ports' in data:
+                        return data.get('ports', [])
+                    elif isinstance(data, list):
+                        # 如果直接是端口列表，直接返回
+                        return data
+                    else:
+                        self.logger.warning("⚠️ 历史文件格式异常，返回空列表")
+                        return []
         except Exception as e:
             self.logger.warning(f"⚠️ 加载上次结果失败: {e}")
         return []
@@ -289,7 +333,7 @@ class SerialDetector:
         filepath = self.storage_path / filename
         
         data = {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'ports': results,
             'added': changes['added'],
             'removed': changes['removed']
@@ -310,7 +354,8 @@ class SerialDetector:
     def publish_mqtt(self, data: Dict) -> bool:
         """发布 MQTT 消息"""
         try:
-            client = mqtt.Client()
+            # 使用新的 MQTT 客户端 API
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             
             # 设置认证
             if self.mqtt_config.get('user') and self.mqtt_config.get('pass'):
@@ -368,7 +413,7 @@ class SerialDetector:
         
         # MQTT 上报
         mqtt_data = {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'ports': current_results,
             'added': changes['added'],
             'removed': changes['removed']
