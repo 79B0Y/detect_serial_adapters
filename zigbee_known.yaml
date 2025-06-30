@@ -2,14 +2,12 @@
 # 格式: VID (Vendor ID) 和 PID (Product ID) 为十六进制值
 # 常见 Zigbee 适配器设备列表
 
-# Texas Instruments CC2531/CC2530 系列
 - vid: 0x0451
   pid: 0x16A8
   name: "Texas Instruments CC2531 USB Dongle"
   type: "ZNP"
   baudrate: 115200
 
-# Dresden Elektronik ConBee/ConBee II
 - vid: 0x1CF1
   pid: 0x0030
   name: "Dresden Elektronik ConBee II"
@@ -22,7 +20,6 @@
   type: "deCONZ"
   baudrate: 38400
 
-# Silicon Labs EZSP 协调器
 - vid: 0x10C4
   pid: 0xEA60
   name: "Silicon Labs CP2102/CP2109 USB to UART Bridge"
@@ -35,56 +32,48 @@
   type: "EZSP"
   baudrate: 115200
 
-# ITead Sonoff Zigbee 3.0 USB Dongle Plus
 - vid: 0x1A86
   pid: 0x55D4
   name: "ITead Sonoff Zigbee 3.0 USB Dongle Plus"
   type: "EZSP"
   baudrate: 115200
 
-# Electrolama zig-a-zig-ah! (zzh!)
 - vid: 0x0403
   pid: 0x6015
   name: "Electrolama zig-a-zig-ah! (zzh!)"
   type: "EZSP"
   baudrate: 115200
 
-# Slaesh's CC2652RB stick
 - vid: 0x10C4
   pid: 0xEA60
   name: "Slaesh's CC2652RB stick"
   type: "ZNP"
   baudrate: 115200
 
-# Tube's CC2652P2 coordinator
 - vid: 0x10C4
   pid: 0xEA60
   name: "Tube's CC2652P2 coordinator"
   type: "ZNP"
   baudrate: 115200
 
-# ZZH-P (CC2652P based)
 - vid: 0x0403
   pid: 0x6015
   name: "ZZH-P CC2652P Coordinator"
   type: "ZNP"
   baudrate: 115200
 
-# Home Assistant SkyConnect
 - vid: 0x10C4
   pid: 0xEA60
   name: "Home Assistant SkyConnect"
   type: "EZSP"
   baudrate: 115200
 
-# Nabu Casa SkyConnect
 - vid: 0x1A86
   pid: 0x55D4
   name: "Nabu Casa SkyConnect"
   type: "EZSP"
   baudrate: 115200
 
-# Generic FTDI-based coordinators
 - vid: 0x0403
   pid: 0x6001
   name: "FTDI FT232R USB UART (Generic Zigbee)"
@@ -97,21 +86,18 @@
   type: "Unknown"
   baudrate: 115200
 
-# Prolific PL2303-based coordinators
 - vid: 0x067B
   pid: 0x2303
   name: "Prolific PL2303 USB-to-Serial (Generic Zigbee)"
   type: "Unknown"
   baudrate: 115200
 
-# CH340/CH341 series
 - vid: 0x1A86
   pid: 0x7523
   name: "QinHeng Electronics CH340 USB-Serial (Generic Zigbee)"
   type: "Unknown"
   baudrate: 115200
 
-# ZiGate coordinators
 - vid: 0x0403
   pid: 0x6001
   name: "ZiGate USB-TTL"
@@ -124,14 +110,12 @@
   type: "ZiGate"
   baudrate: 115200
 
-# CC2538 based coordinators
 - vid: 0x0451
   pid: 0xBEF3
   name: "Texas Instruments CC2538 USB CDC"
   type: "ZNP"
   baudrate: 115200
 
-# Raspberry Pi UART (when using GPIO)
 - vid: null
   pid: null
   name: "Raspberry Pi UART (/dev/ttyAMA0)"
@@ -139,7 +123,6 @@
   baudrate: 115200
   device_pattern: "/dev/ttyAMA*"
 
-# Generic USB-Serial devices that might be Zigbee
 - vid: 0x10C4
   pid: 0xEA70
   name: "Silicon Labs CP210x UART Bridge (Possible Zigbee)"
@@ -152,14 +135,12 @@
   type: "Unknown"
   baudrate: 115200
 
-# Additional ConBee variants
 - vid: 0x1CF1
   pid: 0x0031
   name: "Dresden Elektronik ConBee III"
   type: "deCONZ"
   baudrate: 38400
 
-# ESP32-based Zigbee coordinators
 - vid: 0x303A
   pid: 0x1001
   name: "Espressif ESP32-S2 (Zigbee Coordinator)"
@@ -172,21 +153,18 @@
   type: "EZSP"
   baudrate: 115200
 
-# CC1352P coordinators
 - vid: 0x0451
   pid: 0x16C8
   name: "Texas Instruments CC1352P LaunchPad"
   type: "ZNP"
   baudrate: 115200
 
-# Custom/DIY coordinators
 - vid: 0x2E8A
   pid: 0x0005
   name: "Raspberry Pi Pico (Custom Zigbee)"
   type: "Unknown"
   baudrate: 115200
 
-# Additional FTDI variants commonly used for Zigbee
 - vid: 0x0403
   pid: 0x6011
   name: "FTDI FT4232H Quad HS USB-UART/FIFO (Zigbee)"
