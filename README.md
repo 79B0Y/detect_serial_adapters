@@ -1,402 +1,128 @@
-# 串口适配器自动识别系统
+# 串口适配器自动识别系统设计说明
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.7+-blue.svg)
-![Node.js](https://img.shields.io/badge/node.js-14+-green.svg)
-![Platform](https://img.shields.io/badge/platform-Android%20Termux-orange.svg)
+## 📌 项目目标
 
-专为 **Android Termux + Proot Ubuntu** 环境设计的串口适配器自动识别系统。能够自动检测并识别 Zigbee 和 Z-Wave 串口适配器，通过 MQTT 实时上报设备状态。
+构建一套运行于 Android Termux + Proot Ubuntu 环境中的自动串口适配器识别系统，支持识别 Zigbee（EZSP 协议）与 Z-Wave 适配器，并通过 MQTT 实时上报识别过程与结果。
 
-## ✨ 主要功能
+---
 
-- 🔍 **自动扫描** 所有 `/dev/tty*` 串口设备
-- 🏠 **Zigbee 检测** 支持 zigbee-herdsman 自动检测 + VID/PID 匹配
-- 🌊 **Z-Wave 检测** 通过版本命令识别 Z-Wave 适配器
-- 📊 **占用状态** 实时监控串口占用情况
-- 📡 **MQTT 上报** 实时推送扫描结果
-- 💾 **历史记录** JSON 文件存档，支持新增/移除设备对比
-- 🎨 **彩色输出** 中文界面，直观的控制台显示
-- ⚡ **高性能** 支持批量检测和异步处理
+## 🧩 系统组成
 
-## 🚀 快速开始
+### 1. 主脚本：`detect_serial_adapters.py`
 
-### 环境要求
+负责整个串口识别流程，包括串口枚举、协议识别、状态上报、结果保存。
 
-- Android 设备（已 root）
-- Termux + Proot Ubuntu 环境
-- Python 3.7+
-- Node.js 14+
-- MQTT Broker
+### 2. 状态记录与上报
 
-### 一键安装
+* 本地存储：每次识别结果保存为 `serial_ports_YYYYMMDDHHMMSS.json`
+* 最新结果文件为 `latest.json`
+* 保留最近 3 次识别结果
+* MQTT 实时上报串口状态与最终识别列表
 
-```bash
-# 下载安装脚本
-curl -fsSL https://raw.githubusercontent.com/your-repo/install.sh | sudo bash
+### 3. 支持协议
 
-# 或者克隆仓库手动安装
-git clone https://github.com/your-repo/serial-adapter-detector.git
-cd serial-adapter-detector
-sudo chmod +x install.sh
-sudo ./install.sh
-```
+* **Zigbee**（EZSP）：发送标准重置帧 `1AC038BC7E`，匹配 `11` 开头响应
+* **Z-Wave**：发送版本请求 `01030015E9`，匹配 `01 10` 响应开头
+* 支持常见波特率自动匹配（如 115200, 57600, 38400 等）
 
-### 手动安装
+---
 
-1. **安装系统依赖**
-```bash
-apt update && apt install -y python3 python3-pip nodejs npm udev usbutils
-```
+## ⚙️ 系统工作流程
 
-2. **安装 Python 依赖**
-```bash
-pip3 install -r requirements.txt
-```
+1. 启动脚本 → MQTT 上报 `{ status: running }`
+2. 遍历所有串口设备：`/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyAS*`, `/dev/ttyS*`, `/dev/ttyAMA*`
+3. 对每个串口：
 
-3. **安装 NodeJS 依赖**
-```bash
-npm install
-```
+   * 上报状态 `{ status: detecting, port: /dev/ttyXYZ }`
+   * 判断是否被占用（lsof）
 
-4. **创建存储目录**
-```bash
-mkdir -p /sdcard/isgbackup/serialport/
-```
+     * 若占用，上报 `{ status: occupied }`
+   * 若空闲：
 
-5. **设置权限**
-```bash
-sudo usermod -a -G dialout $USER
-```
+     * 依次尝试 Zigbee 波特率列表，发送 EZSP 命令 → 匹配响应 → 上报 `zigbee_detected`
+     * 若 Zigbee 失败，继续尝试 Z-Wave 波特率，发送 Z-Wave 命令 → 匹配响应 → 上报 `zwave_detected`
+     * 若全部失败，记录为未知设备
+4. 所有串口探测完成后：
 
-## 📖 使用说明
+   * 与 `latest.json` 比对设备变更（新增/移除）
+   * MQTT 上报完整列表，包括 ports, added, removed
+   * 保存当前结果为 JSON 文件，并更新 latest.json
+   * 清理旧记录文件，保留最新 3 个
 
-### 基本用法
+---
 
-```bash
-# 直接运行检测
-python3 detect_serial_adapters.py
+## 📤 MQTT 上报格式
 
-# 详细输出模式
-python3 detect_serial_adapters.py --verbose
-
-# 使用启动脚本
-./start_serial_detector.sh
-
-# 自定义 MQTT 配置
-python3 detect_serial_adapters.py \
-  --mqtt-broker 192.168.1.100 \
-  --mqtt-port 1883 \
-  --mqtt-user admin \
-  --mqtt-pass password
-```
-
-### 参数选项
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--config` | `zigbee_known.yaml` | Zigbee 设备配置文件 |
-| `--storage` | `/sdcard/isgbackup/serialport/` | 数据存储目录 |
-| `--mqtt-broker` | `127.0.0.1` | MQTT Broker 地址 |
-| `--mqtt-port` | `1883` | MQTT 端口 |
-| `--mqtt-user` | `admin` | MQTT 用户名 |
-| `--mqtt-pass` | `admin` | MQTT 密码 |
-| `--mqtt-topic` | `isg/serial/scan` | MQTT 主题 |
-| `--verbose` | `false` | 详细输出模式 |
-
-### 定时服务
-
-```bash
-# 启动定时检测服务（每5分钟）
-sudo systemctl start serial-detector.timer
-
-# 查看服务状态
-sudo systemctl status serial-detector.timer
-
-# 停止服务
-sudo systemctl stop serial-detector.timer
-```
-
-## 📊 输出格式
-
-### MQTT 消息格式
+### 运行开始：
 
 ```json
 {
-  "timestamp": "2024-01-01T12:00:00Z",
-  "ports": [
-    {
-      "device": "/dev/ttyUSB0",
-      "name": "ttyUSB0",
-      "description": "Silicon Labs CP2102 USB to UART Bridge",
-      "vid": 4292,
-      "pid": 60000,
-      "manufacturer": "Silicon Labs",
-      "product": "CP2102 USB to UART Bridge Controller",
-      "busy": false,
-      "zigbee": {
-        "name": "Silicon Labs CP2102/CP2109 USB to UART Bridge",
-        "method": "vid_pid",
-        "type": "EZSP"
-      },
-      "zwave": false
-    }
-  ],
-  "added": [],
+  "status": "running",
+  "timestamp": "2025-06-30T14:20:00Z"
+}
+```
+
+### 探测状态（每个串口）
+
+```json
+{
+  "status": "zigbee_detecting",
+  "port": "/dev/ttyAS3",
+  "timestamp": "..."
+}
+```
+
+### 协议识别成功：
+
+```json
+{
+  "status": "zigbee_detected",
+  "port": "/dev/ttyAS3",
+  "protocol": "ezsp",
+  "baudrate": 115200,
+  "confidence": "medium",
+  "timestamp": "..."
+}
+```
+
+### 最终结果汇总：
+
+```json
+{
+  "timestamp": "2025-06-30T14:25:00Z",
+  "ports": [ { 每个设备信息 } ],
+  "added": ["/dev/ttyAS3"],
   "removed": []
 }
 ```
 
-### 日志输出示例
+---
+
+## 📁 文件结构
 
 ```
-🚀 串口适配器检测系统初始化完成
-✅ 加载了 25 个已知 Zigbee 设备
-🔍 发现 2 个串口设备
-🔍 检测设备: /dev/ttyUSB0
-✅ Zigbee (VID/PID): Silicon Labs CP2102/CP2109 USB to UART Bridge
-🔍 检测设备: /dev/ttyUSB1
-✅ Z-Wave: /dev/ttyUSB1
-💾 结果已保存: serial_ports_20240101120000.json
-📡 MQTT 发布成功: isg/serial/scan
-✅ 扫描完成并已上报
-
-📊 扫描统计
-📊 总设备数: 2
-🏠 Zigbee: 1
-🌊 Z-Wave: 1
-🔒 被占用: 0
+/sdcard/isgbackup/serialport/
+├── detect_serial_adapters.py      # 主程序
+├── serial_detect.log              # 中文运行日志
+├── serial_ports_*.json            # 每次完整结果快照
+├── latest.json                    # 最新一次扫描快照
 ```
-
-## ⚙️ 配置文件
-
-### zigbee_known.yaml
-
-包含已知 Zigbee 设备的 VID/PID 数据库：
-
-```yaml
-- vid: 0x10C4
-  pid: 0xEA60
-  name: "Silicon Labs CP2102/CP2109 USB to UART Bridge"
-  type: "EZSP"
-  baudrate: 115200
-
-- vid: 0x1CF1
-  pid: 0x0030
-  name: "Dresden Elektronik ConBee II"
-  type: "deCONZ"
-  baudrate: 38400
-```
-
-支持的设备类型：
-- **EZSP**: Silicon Labs EmberZNet 协议栈
-- **ZNP**: Texas Instruments Z-Stack 协议栈  
-- **deCONZ**: Dresden Elektronik deCONZ 协议栈
-- **ZiGate**: ZiGate 协议栈
-
-## 🔧 高级功能
-
-### 自定义检测脚本
-
-可以通过修改 `detect_zigbee_with_z2m.js` 来自定义 Zigbee 检测逻辑：
-
-```javascript
-// 自定义适配器检测超时时间
-const adapter = await herdsman.adapter.autoDetectAdapter(serialPort, {
-    timeout: 20000,  // 20秒超时
-    baudrates: [115200, 38400, 57600, 9600]
-});
-```
-
-### 集成到现有系统
-
-系统设计为模块化，可以轻松集成到其他项目：
-
-```python
-from detect_serial_adapters import SerialDetector
-
-detector = SerialDetector()
-results = detector.detect_adapters()
-print(f"发现 {len(results)} 个设备")
-```
-
-### MQTT 订阅示例
-
-```python
-import paho.mqtt.client as mqtt
-import json
-
-def on_message(client, userdata, message):
-    data = json.loads(message.payload.decode())
-    print(f"检测到 {len(data['ports'])} 个串口设备")
-    
-    for port in data['ports']:
-        if port.get('zigbee'):
-            print(f"Zigbee: {port['device']} - {port['zigbee']['name']}")
-        if port.get('zwave'):
-            print(f"Z-Wave: {port['device']}")
-
-client = mqtt.Client()
-client.on_message = on_message
-client.connect("127.0.0.1", 1883, 60)
-client.subscribe("isg/serial/scan")
-client.loop_forever()
-```
-
-## 🐛 故障排除
-
-### 常见问题
-
-**1. 权限问题**
-```bash
-# 检查用户组
-groups $USER
-
-# 添加到 dialout 组
-sudo usermod -a -G dialout $USER
-
-# 重新登录或重启
-```
-
-**2. NodeJS 依赖问题**
-```bash
-# 清理并重新安装
-rm -rf node_modules package-lock.json
-npm install
-
-# 或使用 yarn
-yarn install
-```
-
-**3. Python 依赖问题**
-```bash
-# 使用虚拟环境
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-**4. 串口设备检测不到**
-```bash
-# 检查设备是否存在
-ls -la /dev/tty*
-
-# 检查设备权限
-ls -la /dev/ttyUSB*
-
-# 查看系统日志
-dmesg | grep tty
-```
-
-**5. MQTT 连接失败**
-```bash
-# 测试 MQTT 连接
-mosquitto_pub -h 127.0.0.1 -t test -m "hello"
-
-# 检查防火墙
-sudo ufw status
-```
-
-### 调试模式
-
-启用详细日志进行调试：
-
-```bash
-# 启用详细输出
-python3 detect_serial_adapters.py --verbose
-
-# 查看日志文件
-tail -f /sdcard/isgbackup/serialport/serial_detect.log
-
-# 单独测试 Zigbee 检测
-node detect_zigbee_with_z2m.js /dev/ttyUSB0
-```
-
-### 性能优化
-
-```bash
-# 限制扫描设备范围
-export SCAN_PATTERN="/dev/ttyUSB*"
-
-# 调整检测超时时间
-export ZIGBEE_TIMEOUT=10000
-export ZWAVE_TIMEOUT=5000
-```
-
-## 🔮 路线图
-
-### v1.1 计划功能
-- [ ] 自动波特率检测
-- [ ] 支持更多协议（Thread、Matter）
-- [ ] Web 管理界面
-- [ ] 设备健康监控
-- [ ] 配置文件热重载
-
-### v1.2 计划功能
-- [ ] 自动生成 z2m/zwave-js-ui 配置
-- [ ] 设备固件版本检测
-- [ ] 远程设备管理
-- [ ] 集群部署支持
-- [ ] 性能监控面板
-
-### v2.0 愿景
-- [ ] AI 驱动的设备识别
-- [ ] 云端设备数据库
-- [ ] 移动端 APP
-- [ ] 企业级功能
-
-## 🤝 贡献指南
-
-欢迎贡献代码！请遵循以下步骤：
-
-1. **Fork 项目**
-2. **创建功能分支** (`git checkout -b feature/amazing-feature`)
-3. **提交更改** (`git commit -m 'Add amazing feature'`)
-4. **推送到分支** (`git push origin feature/amazing-feature`)
-5. **创建 Pull Request**
-
-### 代码规范
-
-- Python: 遵循 PEP 8，使用 `black` 格式化
-- JavaScript: 遵循 ESLint 规则
-- 提交信息: 使用 [Conventional Commits](https://conventionalcommits.org/)
-
-### 测试
-
-```bash
-# Python 测试
-pytest tests/
-
-# JavaScript 测试
-npm test
-
-# 集成测试
-./tests/integration_test.sh
-```
-
-## 📄 许可证
-
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
-
-## 🙏 致谢
-
-- [zigbee-herdsman](https://github.com/Koenkk/zigbee-herdsman) - Zigbee 协议栈
-- [pyserial](https://github.com/pyserial/pyserial) - Python 串口库
-- [paho-mqtt](https://github.com/eclipse/paho.mqtt.python) - MQTT 客户端
-- [Termux](https://termux.com/) - Android 终端环境
-
-## 📞 支持
-
-- 📚 [Wiki 文档](https://github.com/your-repo/serial-adapter-detector/wiki)
-- 🐛 [问题反馈](https://github.com/your-repo/serial-adapter-detector/issues)
-- 💬 [讨论区](https://github.com/your-repo/serial-adapter-detector/discussions)
-- 📧 邮件: support@yourproject.com
 
 ---
 
-<p align="center">
-  <b>⭐ 如果这个项目对你有帮助，请给我们一个 Star！</b>
-</p>
+## 🔒 错误与异常处理
 
-<p align="center">
-  Made with ❤️ for the Smart Home Community
-</p>
+* 串口无法打开 → 标记为 busy / occupied
+* 响应解析失败 → 忽略，标为 unknown
+* MQTT 连接失败 → 控制台警告，不影响流程
+* 旧记录文件删除失败 → 警告但不终止
+
+---
+
+## 🔜 后续优化建议
+
+* 支持自定义 VID/PID 与设备库（zigbee\_known.yaml）
+* 转为 runit 服务（开机自动探测）
+* 接收 MQTT 命令触发扫描（如 `isg/serial/scan/cmd`）
+* 高亮异常串口 / 多次失败串口追踪
+* Web UI 状态查看
